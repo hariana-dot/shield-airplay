@@ -27,6 +27,7 @@ It contains no subscriptions, advertisements, analytics, or in-app purchases.
 - Idle HTTP connection closure no longer owns the video lifetime; paused playback retains position and media-button routing
 - Explicit stops stay final outside the narrow two-second receiver-local pause compatibility grace
 - Native playback generations reject stale snapshots; `/play` no longer blocks its own HLS HTTP server
+- Since 2.0.1, negotiated AirPlay reverse connections receive real loading, playing, paused, and stopped state notifications; no fake playing state or broader stop suppression
 - Bounded recovery for transient source errors and expired live windows; retry work is canceled on stop
 - TV-first navigation, larger typography, visible D-pad focus, safe edge margins, grouped settings and transport controls
 - System, Light, and Dark app themes persist and update without restarting the receiver

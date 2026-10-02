@@ -1,14 +1,32 @@
+# IDE and operating-system files
 *.iml
-.gradle/
-/local.properties
-/.idea/
+.idea/
 .DS_Store
-/build/
-/app/build/
-/captures
+Thumbs.db
+
+# Local configuration and signing material
+/local.properties
+.env
+.env.*
+!.env.example
+*.jks
+*.keystore
+*.p12
+*.pfx
+
+# Generated Android / Gradle outputs
+.gradle/
+.kotlin/
+build/
 .externalNativeBuild/
 .cxx/
+*.apk
+*.aab
+*.apks
+*.idsig
+
+# Release staging, device captures, and temporary logs
 /dist/
 /device-verification/
-
-*.jks
+/captures/
+*.log

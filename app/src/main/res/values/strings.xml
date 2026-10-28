@@ -18,7 +18,12 @@
     <!-- Overview -->
     <string name="server_stopped">Server stopped</string>
     <string name="waiting_for_connection">Waiting for connection...</string>
-    <string name="waiting_for_playback">Press start on the sender...</string>
+    <string name="waiting_for_playback">Connecting… buffering stream</string>
+    <string name="status_connecting">Connecting… buffering stream</string>
+    <string name="status_waiting_for_video">Waiting for video</string>
+    <string name="status_receiver">Receiver</string>
+    <string name="status_sender">Sender</string>
+    <string name="status_media">Media</string>
     <string name="error_starting_server">Error starting server</string>
     <string name="connected_count">%d connected</string>
     <string name="error_label">Error</string>
@@ -103,6 +108,8 @@
     <string name="setting_require_pin_desc">Require 4-digit PIN for each new connection</string>
     <string name="setting_allow_new_conn">Allow new connections</string>
     <string name="setting_allow_new_conn_desc">Drop current client when a new one connects</string>
+    <string name="setting_tv_stop_disconnects">TV Stop also disconnects iPhone</string>
+    <string name="setting_tv_stop_disconnects_desc">Stop or Back on the TV ends AirPlay on the sender too; Pause still only pauses</string>
 
     <!-- Settings: Display -->
     <string name="setting_theme">App theme</string>

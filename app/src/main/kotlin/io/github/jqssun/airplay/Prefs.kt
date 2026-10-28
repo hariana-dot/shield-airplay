@@ -47,4 +47,6 @@ object Prefs {
     const val ADVERTISE_AUDIO = "advertise_audio"; const val DEF_ADVERTISE_AUDIO = true
     const val LAUNCH_ON_CONNECT = "launch_on_connect"; const val DEF_LAUNCH_ON_CONNECT = true
     const val THEME_MODE = "theme_mode"; const val DEF_THEME_MODE = "system"
+    /** When true, TV Stop/Back ends the AirPlay session on the sender too (default ON). */
+    const val TV_STOP_DISCONNECTS = "tv_stop_disconnects"; const val DEF_TV_STOP_DISCONNECTS = true
 }

@@ -1,32 +1,15 @@
-# IDE and operating-system files
 *.iml
-.idea/
-.DS_Store
-Thumbs.db
-
-# Local configuration and signing material
-/local.properties
-.env
-.env.*
-!.env.example
-*.jks
-*.keystore
-*.p12
-*.pfx
-
-# Generated Android / Gradle outputs
 .gradle/
-.kotlin/
-build/
+/local.properties
+/.idea/
+.DS_Store
+/build/
+/app/build/
+/captures
 .externalNativeBuild/
 .cxx/
-*.apk
-*.aab
-*.apks
-*.idsig
-
-# Release staging, device captures, and temporary logs
 /dist/
 /device-verification/
-/captures/
-*.log
+
+*.jks
+Shield-AirPlay-*.apk

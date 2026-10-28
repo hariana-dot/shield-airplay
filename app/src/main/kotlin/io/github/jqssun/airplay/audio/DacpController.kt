@@ -33,6 +33,8 @@ class DacpController(ctx: Context) {
 
     fun play() = _send("/ctrl-int/1/play")
     fun pause() = _send("/ctrl-int/1/pause")
+    /** Ask the sender to end playback / the AirPlay session. */
+    fun stop() = _send("/ctrl-int/1/stop")
     fun nextItem() = _send("/ctrl-int/1/nextitem")
     fun prevItem() = _send("/ctrl-int/1/previtem")
     fun volumeUp() = _send("/ctrl-int/1/volumeup")

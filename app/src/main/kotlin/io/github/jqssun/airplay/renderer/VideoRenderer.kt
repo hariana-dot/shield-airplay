@@ -85,7 +85,11 @@ class VideoRenderer(ctx: Context) {
     // codec per mirror session; pipeline persists across sessions
     fun startSession() = synchronized(lock) { _resetStats() }
 
-    fun stopSession() = synchronized(lock) { stopCodec() }
+    fun stopSession() = synchronized(lock) {
+        stopCodec()
+        // Drop last painted frame so disconnect does not leave a frozen image.
+        pipeline.clearDisplay()
+    }
 
     private fun _resetStats() {
         fps = 0; bitrateBps = 0; frameCount = 0; codecName = ""

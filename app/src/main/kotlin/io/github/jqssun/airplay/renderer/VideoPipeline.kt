@@ -39,6 +39,7 @@ class VideoPipeline {
     @Volatile private var frameAvailable = false
     private var pendingDisplay: Surface? = null
     private var displayDirty = false
+    private var pendingClear = false
     @Volatile private var videoW = 0
     @Volatile private var videoH = 0
 
@@ -52,6 +53,13 @@ class VideoPipeline {
     fun setDisplaySurface(surface: Surface?) = synchronized(lock) {
         pendingDisplay = surface
         displayDirty = true
+        lock.notifyAll()
+    }
+
+    /** Blank the attached display and drop the last decoded frame (disconnect / mirror stop). */
+    fun clearDisplay() = synchronized(lock) {
+        pendingClear = true
+        hasFrame = false
         lock.notifyAll()
     }
 
@@ -89,12 +97,17 @@ class VideoPipeline {
             var newDisplay: Surface? = null
             var displayChanged = false
             var doFrame = false
+            var doClear = false
             synchronized(lock) {
-                while (running && !frameAvailable && !displayDirty) lock.wait()
+                while (running && !frameAvailable && !displayDirty && !pendingClear) lock.wait()
                 if (running && displayDirty) {
                     newDisplay = pendingDisplay
                     displayChanged = true
                     displayDirty = false
+                }
+                if (running && pendingClear) {
+                    pendingClear = false
+                    doClear = true
                 }
                 if (running && frameAvailable) {
                     frameAvailable = false
@@ -103,6 +116,7 @@ class VideoPipeline {
             }
             if (!running) break
             if (displayChanged) _bindDisplay(newDisplay)
+            if (doClear) _clearWindow()
             if (doFrame) _consumeAndDraw()
         }
         _releaseGl()
@@ -126,6 +140,17 @@ class VideoPipeline {
         winH = egl.query(window, EGL14.EGL_HEIGHT)
         // an idle source sends no new frames, so repaint last one or new surface stays black
         if (hasFrame) _render()
+    }
+
+    private fun _clearWindow() {
+        val egl = egl ?: return
+        if (window == EGL14.EGL_NO_SURFACE) return
+        egl.makeCurrent(window)
+        GLES20.glViewport(0, 0, winW, winH)
+        GLES20.glClearColor(0f, 0f, 0f, 1f)
+        GLES20.glClear(GLES20.GL_COLOR_BUFFER_BIT)
+        egl.swap(window)
+        hasFrame = false
     }
 
     private fun _consumeAndDraw() {

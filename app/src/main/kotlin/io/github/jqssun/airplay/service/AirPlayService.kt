@@ -144,6 +144,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     private val _mirroringActive = MutableStateFlow(false)
     val mirroringActive = _mirroringActive.asStateFlow()
 
+    // Sender handshake window for UI status lights (not raw TCP count).
+    private val _senderHandshakeUntilMs = MutableStateFlow(0L)
+    val senderHandshakeUntilMs = _senderHandshakeUntilMs.asStateFlow()
+    private var _lastSessionActivityAtMs = 0L
+    private var _reconnectSuppressUntilMs = 0L
+    private val _staleConnectionWatchdog = Runnable { _checkStaleConnections() }
+
     private val _trackInfo = MutableStateFlow(TrackInfo())
     val trackInfo = _trackInfo.asStateFlow()
 
@@ -544,6 +551,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         _durationMs.value = 0
         _serverState.value = ServerState.STOPPED
         _connectionCount.value = 0
+        _senderHandshakeUntilMs.value = 0L
+        _lastSessionActivityAtMs = 0L
+        _reconnectSuppressUntilMs = 0L
+        _mainHandler.removeCallbacks(_staleConnectionWatchdog)
         _refreshDacpPlayer()
         stopForeground(STOP_FOREGROUND_REMOVE)
         foregroundStarted = false
@@ -597,10 +608,85 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         airPlayVideoPlayer.seekBy(deltaMs)
     }
 
-    fun stopVideoPlayback() = _decideVideoSession(Reason.LOCAL_EXIT)
+    fun stopVideoPlayback() {
+        val disconnectSender = prefs.getBoolean(Prefs.TV_STOP_DISCONNECTS, Prefs.DEF_TV_STOP_DISCONNECTS)
+        _decideVideoSession(Reason.LOCAL_EXIT)
+        if (disconnectSender) _disconnectSenderAfterLocalStop()
+    }
+
 
     fun downloadVideo() {
         _videoLocation.value?.let { videoDownloader.start(it) }
+    }
+
+
+    private fun _markSessionActivity(extendHandshake: Boolean = true) {
+        val now = SystemClock.elapsedRealtime()
+        _lastSessionActivityAtMs = now
+        if (extendHandshake) {
+            _senderHandshakeUntilMs.value = ReceiverStatusPolicy.handshakeUntilAfter(now)
+        }
+        _mainHandler.removeCallbacks(_staleConnectionWatchdog)
+    }
+
+    private fun _scheduleStaleConnectionCheck() {
+        _mainHandler.removeCallbacks(_staleConnectionWatchdog)
+        val now = SystemClock.elapsedRealtime()
+        val delay = ReceiverStatusPolicy.staleCheckDelayMs(
+            nowMs = now,
+            handshakeUntilMs = _senderHandshakeUntilMs.value.takeIf { it > 0L },
+        )
+        _mainHandler.postDelayed(_staleConnectionWatchdog, delay)
+    }
+
+    private fun _checkStaleConnections() {
+        if (_serverState.value != ServerState.RUNNING) return
+        val now = SystemClock.elapsedRealtime()
+        if (!ReceiverStatusPolicy.shouldResetStaleConnectionCount(
+                connectionCount = _connectionCount.value,
+                mirroringActive = _mirroringActive.value,
+                videoPlaybackActive = _videoPlaybackActive.value,
+                audioOnly = _audioOnly.value,
+                videoSessionPending = videoSessionPending(),
+                lastActivityAtMs = _lastSessionActivityAtMs,
+                nowMs = now,
+                handshakeUntilMs = _senderHandshakeUntilMs.value.takeIf { it > 0L },
+                videoBuffering = _videoPlaybackInfo.value.buffering,
+            )
+        ) {
+            // Still pending / mid-handshake — check again when the window ends.
+            if (_connectionCount.value > 0) _scheduleStaleConnectionCheck()
+            return
+        }
+        log("Resetting stale connection count (${_connectionCount.value} → 0)")
+        _connectionCount.value = 0
+        _senderHandshakeUntilMs.value = 0L
+        _audioOnly.value = false
+        if (!_videoPlaybackActive.value) mediaSession?.isActive = false
+        _refreshDacpPlayer()
+        _updateMediaNotification()
+    }
+
+    /** TV Stop/Back: end local media, ask the sender to stop, and clear session UI. */
+    private fun _disconnectSenderAfterLocalStop() {
+        _sessionLog("TV_STOP_DISCONNECT")
+        try { dacpController?.stop() } catch (_: Exception) {}
+        dacpController?.reset()
+        _endMirrorPresentation()
+        _connectionCount.value = 0
+        _audioOnly.value = false
+        _senderHandshakeUntilMs.value = 0L
+        _lastSessionActivityAtMs = 0L
+        _reconnectSuppressUntilMs = SystemClock.elapsedRealtime() + RECONNECT_SUPPRESS_MS
+        _videoPollSuppressed = true
+        _coverArtBytes = null
+        _trackInfo.value = TrackInfo()
+        _positionMs.value = 0
+        _durationMs.value = 0
+        mediaSession?.isActive = false
+        _refreshDacpPlayer()
+        _updateMediaNotification()
+        _mainHandler.removeCallbacks(_staleConnectionWatchdog)
     }
 
     private fun _sessionLog(reason: String) {
@@ -679,6 +765,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
 
     override fun onVideoSessionPoll() = _postServerCallback {
         _lastVideoPollAt = SystemClock.elapsedRealtime()
+        _markSessionActivity(extendHandshake = true)
     }
 
     override fun onVideoPlay(location: String, startPositionSeconds: Float, generation: Long) {
@@ -696,6 +783,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             _videoTitle.value = ""
             _lastVideoStateRate = -1f
             _videoPlaybackActive.value = true
+            _markSessionActivity(extendHandshake = true)
             _sessionLog("NEW_PLAY")
             airPlayVideoPlayer.play(location, startPositionSeconds)
             mediaSession?.isActive = true
@@ -751,6 +839,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             _videoResolution.value = "${w.toInt()}x${h.toInt()}"
             videoRenderer.setResolution(w.toInt(), h.toInt())
             _mirroringActive.value = true
+            _markSessionActivity(extendHandshake = true)
         }
         log("Video size: ${srcW}x${srcH} -> ${w}x${h}")
     }
@@ -819,11 +908,18 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         val firstConnection = _connectionCount.value == 0
         _connectionCount.value++
         log("Client connected (${_connectionCount.value})")
+        // TCP pre-auth only: open a short handshake window, then watchdog clears leftovers.
+        _markSessionActivity(extendHandshake = true)
+        _scheduleStaleConnectionCheck()
         if (!firstConnection) return
         // conn_init is only a tcp pre-auth signal. pin-required sessions must wait for
         // onDisplayPin, otherwise the server ui can move before the client pin is current
         if (requiresPin()) return
         if (!shouldLaunchOnConnect()) return
+        if (SystemClock.elapsedRealtime() < _reconnectSuppressUntilMs) {
+            log("Suppressing launch-on-connect after TV stop disconnect")
+            return
+        }
         launchMainActivity()
     }
 
@@ -836,10 +932,13 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         if (_connectionCount.value == 0) {
             // This includes localhost HLS fetches: never treat it as sender ownership.
             _decideVideoSession(Reason.ALL_CLIENTS_GONE)
+            // Phone-side stop may tear TCP before/without a clean mirror flag; blank UI.
+            _endMirrorPresentation()
             // last client gone: release audio output devices to save power
             audioRenderer.stop()
             _audioOnly.value = false
             _lastVideoPollAt = 0
+            _senderHandshakeUntilMs.value = 0L
             // Do not clear explicit-stop suppression on transport churn.
             _coverArtBytes = null
             _trackInfo.value = TrackInfo()
@@ -857,6 +956,10 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
             if (!_videoPlaybackActive.value) mediaSession?.isActive = false
             _refreshDacpPlayer()
             _updateMediaNotification()
+            _mainHandler.removeCallbacks(_staleConnectionWatchdog)
+        } else {
+            // Leftover TCP sockets after a real disconnect: force Ready within ~2s if idle.
+            _scheduleStaleConnectionCheck()
         }
         log("Client disconnected (${_connectionCount.value})")
     }
@@ -916,11 +1019,19 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
     }
 
     override fun onMirrorRunning(running: Boolean) {
-        if (running) videoRenderer.startSession() else {
-            videoRenderer.stopSession()
-            _mirroringActive.value = false
+        if (running) {
+            videoRenderer.startSession()
+            // Mirror owns the session; leave audio-only to onAudioFormat(usingScreen=false).
+            _setAudioOnly(false)
+        } else {
+            _endMirrorPresentation()
         }
-        _setAudioOnly(!running)
+    }
+
+    /** Stop mirror codec, blank the last frame, and clear mirroring UI flags. */
+    private fun _endMirrorPresentation() {
+        videoRenderer.stopSession()
+        _mirroringActive.value = false
     }
 
     private fun _setAudioOnly(audioOnly: Boolean) {
@@ -928,6 +1039,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         _audioOnly.value = audioOnly
         _refreshDacpPlayer()
         if (audioOnly && !prev) {
+            _markSessionActivity(extendHandshake = true)
             mediaSession?.isActive = true
             log("Audio mode")
         } else if (!audioOnly && prev) {
@@ -1231,6 +1343,7 @@ class AirPlayService : LifecycleService(), RaopCallbackHandler, LogListener {
         const val VIDEO_SEEK_STEP_MS = 10_000L
         const val VIDEO_POLL_PENDING_TIMEOUT_MS = 3_000L
         const val LOCAL_PAUSE_REMOTE_STOP_GRACE_MS = 2_000L
+        private const val RECONNECT_SUPPRESS_MS = 2_000L
 
         private const val AUDIO_CONFIG_DEBOUNCE_MS = 500L
     }

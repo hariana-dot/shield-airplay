@@ -55,6 +55,8 @@ import androidx.core.view.WindowInsetsCompat
 import androidx.core.view.WindowInsetsControllerCompat
 import io.github.jqssun.airplay.R
 import io.github.jqssun.airplay.service.AirPlayService.ServerState
+import io.github.jqssun.airplay.service.ReceiverStatusPolicy
+import android.os.SystemClock
 import io.github.jqssun.airplay.ui.gestures.BrightnessState
 import io.github.jqssun.airplay.ui.gestures.DoubleTapIndicator
 import io.github.jqssun.airplay.ui.gestures.GestureInfoText
@@ -121,10 +123,13 @@ fun MainScreen(
     var prevMirroringActive by remember { mutableStateOf(false) }
     LaunchedEffect(mirroringActive, audioOnly, videoPlaybackActive, pin) {
         val justStarted = !prevMirroringActive && mirroringActive
+        val justStopped = prevMirroringActive && !mirroringActive
         prevMirroringActive = mirroringActive
         if (justStarted && !audioOnly && !videoPlaybackActive && autoFullscreen && pin == null) {
             fullscreen = true
         }
+        // Phone stop clears mirroring while leftover TCP may keep connections > 0.
+        if (justStopped) fullscreen = false
     }
 
     // manual fullscreen over the idle preview is deliberate; only undo on disconnect
@@ -657,8 +662,42 @@ private fun OverviewContent(
     val idlePreview by viewModel.idlePreview.collectAsState()
     val mirroringActive by viewModel.mirroringActive.collectAsState()
     val videoPlaybackActive by viewModel.videoPlaybackActive.collectAsState()
+    val audioOnlyOverview by viewModel.audioOnly.collectAsState()
+    val videoSessionPending by viewModel.videoSessionPending.collectAsState()
+    val videoBuffering by viewModel.videoBuffering.collectAsState()
+    val senderHandshakeUntilMs by viewModel.senderHandshakeUntilMs.collectAsState()
     val debugEnabled by viewModel.debugEnabled.collectAsState()
     val debugInfo by viewModel.debugInfo.collectAsState()
+    var nowMs by remember { mutableLongStateOf(SystemClock.elapsedRealtime()) }
+    LaunchedEffect(senderHandshakeUntilMs, mirroringActive, videoPlaybackActive, audioOnlyOverview, videoSessionPending) {
+        while (true) {
+            nowMs = SystemClock.elapsedRealtime()
+            val until = senderHandshakeUntilMs
+            if (until <= 0L || nowMs >= until) break
+            delay(minOf(500L, (until - nowMs).coerceAtLeast(50L)))
+        }
+        nowMs = SystemClock.elapsedRealtime()
+    }
+    val statusLights = ReceiverStatusPolicy.deriveLights(
+        serverRunning = state == ServerState.RUNNING,
+        mirroringActive = mirroringActive,
+        videoPlaybackActive = videoPlaybackActive,
+        audioOnly = audioOnlyOverview,
+        videoSessionPending = videoSessionPending,
+        videoBuffering = videoBuffering,
+        handshakeUntilMs = senderHandshakeUntilMs.takeIf { it > 0L },
+        nowMs = nowMs,
+    )
+    val centreCopy = ReceiverStatusPolicy.deriveCentreCopy(
+        serverRunning = state == ServerState.RUNNING,
+        mirroringActive = mirroringActive,
+        videoPlaybackActive = videoPlaybackActive,
+        audioOnly = audioOnlyOverview,
+        videoSessionPending = videoSessionPending,
+        videoBuffering = videoBuffering,
+        handshakeUntilMs = senderHandshakeUntilMs.takeIf { it > 0L },
+        nowMs = nowMs,
+    )
     val tv = isTv()
     val startFocus = remember { FocusRequester() }
     LaunchedEffect(Unit) {
@@ -676,22 +715,27 @@ private fun OverviewContent(
                 .background(MaterialTheme.colorScheme.surface),
             contentAlignment = Alignment.Center
         ) {
-            val connecting = state == ServerState.RUNNING && connections > 0 &&
-                !mirroringActive && !videoPlaybackActive
-            if (showAudioMode && state == ServerState.RUNNING && connections > 0) {
+            if (showAudioMode && state == ServerState.RUNNING &&
+                (audioOnlyOverview || statusLights.senderOn)
+            ) {
                 NowPlayingContent(viewModel)
             } else {
                 if (state == ServerState.RUNNING && (mirroringActive || idlePreview)) {
                     video()
                 }
-                if (state != ServerState.RUNNING || connections == 0) {
-                    ReceiverHero(name = serverName, state = state)
-                } else if (connecting) {
-                    Text(
-                        text = stringResource(R.string.waiting_for_playback),
-                        style = MaterialTheme.typography.bodyLarge,
-                        color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
-                    )
+                when (centreCopy) {
+                    ReceiverStatusPolicy.CentreCopy.HERO ->
+                        ReceiverHero(name = serverName, state = state)
+                    ReceiverStatusPolicy.CentreCopy.CONNECTING ->
+                        Text(
+                            text = stringResource(
+                                if (videoBuffering || videoSessionPending) R.string.status_waiting_for_video
+                                else R.string.status_connecting
+                            ),
+                            style = MaterialTheme.typography.bodyLarge,
+                            color = MaterialTheme.colorScheme.onSurfaceVariant.copy(alpha = 0.7f)
+                        )
+                    ReceiverStatusPolicy.CentreCopy.MEDIA -> Unit
                 }
                 if (state == ServerState.RUNNING && mirroringActive) {
                     Row(
@@ -758,7 +802,7 @@ private fun OverviewContent(
                         maxLines = 1,
                         overflow = TextOverflow.Ellipsis,
                     )
-                    ReceiverStatus(state, connections)
+                    ReceiverStatusLights(statusLights)
                 }
                 Button(
                     onClick = {

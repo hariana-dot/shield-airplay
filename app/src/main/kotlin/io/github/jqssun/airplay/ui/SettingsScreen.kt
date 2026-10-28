@@ -53,6 +53,7 @@ fun SettingsScreen(viewModel: MainViewModel) {
     val overscanned by viewModel.overscanned.collectAsState()
     val requirePin by viewModel.requirePin.collectAsState()
     val allowNewConn by viewModel.allowNewConn.collectAsState()
+    val tvStopDisconnects by viewModel.tvStopDisconnects.collectAsState()
     val autoStart by viewModel.autoStart.collectAsState()
     val bootAutoStart by viewModel.bootAutoStart.collectAsState()
     val runInBackground by viewModel.runInBackground.collectAsState()
@@ -129,6 +130,13 @@ fun SettingsScreen(viewModel: MainViewModel) {
                     description = stringResource(R.string.setting_allow_new_conn_desc),
                     checked = allowNewConn,
                     onCheckedChange = { viewModel.setAllowNewConn(it) }
+                )
+
+                SettingSwitch(
+                    title = stringResource(R.string.setting_tv_stop_disconnects),
+                    description = stringResource(R.string.setting_tv_stop_disconnects_desc),
+                    checked = tvStopDisconnects,
+                    onCheckedChange = { viewModel.setTvStopDisconnects(it) }
                 )
 
                 val ctx = LocalContext.current

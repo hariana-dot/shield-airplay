@@ -96,6 +96,9 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
     private val _connectionCount = MutableStateFlow(0)
     val connectionCount: StateFlow<Int> = _connectionCount.asStateFlow()
 
+    private val _senderHandshakeUntilMs = MutableStateFlow(0L)
+    val senderHandshakeUntilMs: StateFlow<Long> = _senderHandshakeUntilMs.asStateFlow()
+
     private val _pinCode = MutableStateFlow<String?>(null)
     val pinCode: StateFlow<String?> = _pinCode.asStateFlow()
 
@@ -168,6 +171,11 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
 
     private val _allowNewConn = MutableStateFlow(prefs.getBoolean(Prefs.ALLOW_NEW_CONN, Prefs.DEF_ALLOW_NEW_CONN))
     val allowNewConn: StateFlow<Boolean> = _allowNewConn.asStateFlow()
+
+    private val _tvStopDisconnects = MutableStateFlow(
+        prefs.getBoolean(Prefs.TV_STOP_DISCONNECTS, Prefs.DEF_TV_STOP_DISCONNECTS)
+    )
+    val tvStopDisconnects: StateFlow<Boolean> = _tvStopDisconnects.asStateFlow()
 
     private val _audioLatencyMs = MutableStateFlow(prefs.getInt(Prefs.AUDIO_LATENCY_MS, Prefs.DEF_AUDIO_LATENCY_MS))
     val audioLatencyMs: StateFlow<Int> = _audioLatencyMs.asStateFlow()
@@ -408,6 +416,7 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
     fun setOverscanned(v: Boolean) { _overscanned.value = v; prefs.edit().putBoolean(Prefs.OVERSCANNED, v).apply(); _applyByServerRestart() }
     fun setRequirePin(v: Boolean) { _requirePin.value = v; prefs.edit().putBoolean(Prefs.REQUIRE_PIN, v).apply(); _applyByServerRestart() }
     fun setAllowNewConn(v: Boolean) { _allowNewConn.value = v; prefs.edit().putBoolean(Prefs.ALLOW_NEW_CONN, v).apply(); _applyByServerRestart() }
+    fun setTvStopDisconnects(v: Boolean) { _tvStopDisconnects.value = v; prefs.edit().putBoolean(Prefs.TV_STOP_DISCONNECTS, v).apply() }
     fun setAudioLatencyMs(v: Int) { _audioLatencyMs.value = v; prefs.edit().putInt(Prefs.AUDIO_LATENCY_MS, v).apply(); _applyByServerRestart() }
     fun setIdlePreview(v: Boolean) { _idlePreview.value = v; prefs.edit().putBoolean(Prefs.IDLE_PREVIEW, v).apply() }
     fun setAutoFullscreen(v: Boolean) { _autoFullscreen.value = v; prefs.edit().putBoolean(Prefs.AUTO_FULLSCREEN, v).apply() }
@@ -564,6 +573,7 @@ class MainViewModel @Inject constructor(app: Application) : AndroidViewModel(app
         service?.let {
             _serverState.value = it.serverState.value
             _connectionCount.value = it.connectionCount.value
+            _senderHandshakeUntilMs.value = it.senderHandshakeUntilMs.value
             _videoAspect.value = it.videoAspect.value
             _videoResolution.value = it.videoResolution.value
             _audioOnly.value = it.audioOnly.value
